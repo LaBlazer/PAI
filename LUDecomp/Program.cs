@@ -3,6 +3,7 @@ using MPI;
 using System;
 using System.Diagnostics;
 using System.IO;
+using System.Threading;
 
 namespace LUDecomp
 {
@@ -53,6 +54,10 @@ namespace LUDecomp
     {
 
         static readonly Random rnd = new Random();
+
+        static readonly object lok = new object();
+
+        static Barrier barrier;
 
         static void DoolittleSerial(double[,] mtx)
         {
@@ -182,6 +187,38 @@ namespace LUDecomp
             }
 
             return;
+        }
+
+        static void GaussianParallelJob2(double[][] mtx, int threadCount, int threadId)
+        {
+            int n = mtx.Length;
+
+            double[] temp = new double[mtx.Length];
+
+            // 1-d row agglomeration
+            for (int k = 0; k < n - 1; k++)
+            {
+                for (int i = k + 1; i < n; i++)
+                {
+                    if ((i % threadCount) == threadId)
+                    {
+                        // gaussian forward elimination
+                        double lik = mtx[i][k] / mtx[k][k];
+
+                        for (int j = k + 1; j < n; j++)
+                            temp[j] = mtx[i][j] - lik * mtx[k][j];
+                        
+                        temp[k] = lik;
+
+                        
+                        for (int j = k; j < n; j++)
+                            mtx[i][j] = temp[j];
+                    }
+
+                }
+
+                barrier.SignalAndWait();
+            }
         }
 
         static void SplitLU(double[,] mtx, out double[,] lower, out double[,] upper)
@@ -334,9 +371,9 @@ namespace LUDecomp
             {
                 Stopwatch sw = new Stopwatch();
 
-                if (args.Length < 1)
+                if (args.Length < 2)
                 {
-                    Console.WriteLine("Bad args! Usage: input.txt");
+                    Console.WriteLine("Bad args! Usage: input.txt <int>");
                     return;
                 }
 
@@ -345,7 +382,7 @@ namespace LUDecomp
                 if (Intercommunicator.world.Rank == 0) // if we are root process
                 {
                     Console.WriteLine($"Loading from {args[0]}");
-                    Console.WriteLine("Input mtx");
+                    Console.WriteLine($"Input mtx size {mtx.Length}");
                     PrintMatrix(mtx);
 
                     Console.WriteLine("============\nGaussian serial algorithm");
@@ -361,8 +398,28 @@ namespace LUDecomp
                     Console.WriteLine("MPI world size: " + Communicator.world.Size);
 
 
+                    //sw.Restart();
+                    //GaussianParallelJob(mtx);
+                    //sw.Stop();
+
+                    int threadCount = int.Parse(args[1]);
+
+                    Thread[] threads = new Thread[threadCount];
+                    barrier = new Barrier(threadCount);
+
                     sw.Restart();
-                    GaussianParallelJob(mtx);
+                    for(int i = 0; i < threadCount; i++)
+                    {
+                        int lol = i;
+                        threads[i] = new Thread(() => GaussianParallelJob2(mtx, threadCount, lol));
+                        threads[i].Start();
+                    }
+
+                    for (int i = 0; i < threadCount; i++)
+                    {
+                        threads[i].Join();
+                    }
+
                     sw.Stop();
 
                     Console.WriteLine($"Time taken: {sw.ElapsedMilliseconds}ms");
