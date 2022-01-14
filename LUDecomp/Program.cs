@@ -1,5 +1,4 @@
 ﻿
-using MPI;
 using System;
 using System.Diagnostics;
 using System.IO;
@@ -7,7 +6,7 @@ using System.Threading;
 
 namespace LUDecomp
 {
-    static class ExtensionMethods
+    static class Helpers
     {
         public static T[][] ToJaggedArray<T>(this T[,] twoDimensionalArray)
         {
@@ -54,8 +53,6 @@ namespace LUDecomp
     {
 
         static readonly Random rnd = new Random();
-
-        static readonly object lok = new object();
 
         static Barrier barrier;
 
@@ -149,72 +146,23 @@ namespace LUDecomp
             //PrintMatrix(lower);
         }
 
-        static void GaussianParallelJob(double[][] mtx)
+        static void GaussianParallelJob(double[][] mtx, int threadCount, int threadId)
         {
-            // Source https://relate.cs.illinois.edu/course/cs554-f21/f/slides/slides_06.pdf
-
-            Intracommunicator world = Communicator.world;
-            int threadCount = world.Size;
-            int threadId = world.Rank;
-
-            //Console.WriteLine($"running job {threadId + 1}/{threadCount}");
-
             int n = mtx.Length;
-
-            world.Barrier(); // wait for others
+            threadId++;
 
             // 1-d row agglomeration
             for (int k = 0; k < n - 1; k++)
             {
-                for (int i = k + 1; i < n; i++)
+                for (int i = k + threadId; i < n; i += threadCount)
                 {
-                    if ((i % threadCount) == threadId)
-                    {
-                        // gaussian forward elimination
-                        double lik = mtx[i][k] / mtx[k][k];
+                    // gaussian forward elimination
+                    double lik = mtx[i][k] / mtx[k][k];
 
-                        for (int j = k + 1; j < n; j++)
-                            mtx[i][j] -= lik * mtx[k][j];
+                    for (int j = k + 1; j < n; j++)
+                        mtx[i][j] = mtx[i][j] - lik * mtx[k][j];
 
-                        mtx[i][k] = lik;
-                    }
-                }
-
-                for (int i = k + 1; i < n; i++)
-                {
-                    world.Broadcast(ref mtx[i], i % threadCount);
-                }
-            }
-
-            return;
-        }
-
-        static void GaussianParallelJob2(double[][] mtx, int threadCount, int threadId)
-        {
-            int n = mtx.Length;
-
-            double[] temp = new double[mtx.Length];
-
-            // 1-d row agglomeration
-            for (int k = 0; k < n - 1; k++)
-            {
-                for (int i = k + 1; i < n; i++)
-                {
-                    if ((i % threadCount) == threadId)
-                    {
-                        // gaussian forward elimination
-                        double lik = mtx[i][k] / mtx[k][k];
-
-                        for (int j = k + 1; j < n; j++)
-                            temp[j] = mtx[i][j] - lik * mtx[k][j];
-                        
-                        temp[k] = lik;
-
-                        
-                        for (int j = k; j < n; j++)
-                            mtx[i][j] = temp[j];
-                    }
-
+                    mtx[i][k] = lik;
                 }
 
                 barrier.SignalAndWait();
@@ -268,22 +216,24 @@ namespace LUDecomp
             }
         }
 
-        static double[,] GenerateRandomMatrix(int n, double min = 0, double max = 1)
+        static double[][] GenerateRandomMatrix(int n, double min = 0, double max = 1)
         {
-            double[,] mtx = new double[n, n];
+            double[][] mtx = new double[n][];
 
             for (int i = 0; i < n; i++)
             {
+                mtx[i] = new double[n];
+
                 for (int j = 0; j < n; j++)
                 {
-                    mtx[i, j] = rnd.NextDouble() * (max - min) + min;
+                    mtx[i][j] = rnd.NextDouble() * (max - min) + min;
                 }
             }
 
             return mtx;
         }
 
-        static void SaveMatrix(double[,] mtx, string filename)
+        static void SaveMatrix(double[][] mtx, string filename)
         {
             int n = mtx.GetLength(0);
             System.Text.StringBuilder sb = new System.Text.StringBuilder(n * n * 15);
@@ -293,11 +243,11 @@ namespace LUDecomp
                 int j;
                 for (j = 0; j < n - 1; j++)
                 {
-                    sb.Append(mtx[i, j]);
+                    sb.Append(mtx[i][j]);
                     sb.Append(' ');
                 }
 
-                sb.Append(mtx[i, j]);
+                sb.Append(mtx[i][j]);
                 sb.Append('\n');
             }
 
@@ -350,7 +300,15 @@ namespace LUDecomp
 
         public static void Main(String[] args)
         {
-            //Console.WriteLine(string.Join(" + ", args));
+
+            double[][] mtx;
+            double speedSerial;
+
+            if (args.Length < 2)
+            {
+                Console.WriteLine("Bad args!\nUsage: input.txt <proc count> or -g <size> <output file>");
+                return;
+            }
 
             if (args.Length >= 3)
             {
@@ -358,7 +316,7 @@ namespace LUDecomp
                 {
                     Console.WriteLine($"Generating matrix of size {args[1]} to '{args[2]}'");
 
-                    double[,] mtx = GenerateRandomMatrix(int.Parse(args[1]), -50, 50);
+                    mtx = GenerateRandomMatrix(int.Parse(args[1]), -50, 50);
 
                     Console.WriteLine("Saving...");
                     SaveMatrix(mtx, args[2]);
@@ -367,79 +325,57 @@ namespace LUDecomp
                 }
             }
 
-            using (new MPI.Environment(ref args))
+            Stopwatch sw = new Stopwatch();
+
+            Console.WriteLine($"Loading from {args[0]}");
+            mtx = Helpers.ToJaggedArray(LoadMatrix(args[0]));
+
+            Console.WriteLine($"Input mtx size {mtx.Length}");
+            PrintMatrix(mtx);
+
+            Console.WriteLine("============\nGaussian serial algorithm");
+            sw.Restart();
+            double[][] serialMtx = Helpers.CloneJaggedArray(mtx);
+            GaussianSerial(serialMtx);
+            sw.Stop();
+            Console.WriteLine($"Time taken: {sw.ElapsedMilliseconds}ms");
+            speedSerial = sw.ElapsedMilliseconds;
+
+            Console.WriteLine("============\nGaussian parallel algorithm");
+
+            int threadCount = int.Parse(args[1]);
+            Console.WriteLine($"Thread count: {threadCount}");
+
+            Thread[] threads = new Thread[threadCount];
+            barrier = new Barrier(threadCount);
+
+            sw.Restart();
+            for(int i = 0; i < threadCount; i++)
             {
-                Stopwatch sw = new Stopwatch();
+                int lol = i;
+                threads[i] = new Thread(() => GaussianParallelJob(mtx, threadCount, lol));
+                threads[i].Start();
+            }
 
-                if (args.Length < 2)
-                {
-                    Console.WriteLine("Bad args! Usage: input.txt <int>");
-                    return;
-                }
+            for (int i = 0; i < threadCount; i++)
+            {
+                threads[i].Join();
+            }
 
-                double[][] mtx = ExtensionMethods.ToJaggedArray(LoadMatrix(args[0]));
+            sw.Stop();
 
-                if (Intercommunicator.world.Rank == 0) // if we are root process
-                {
-                    Console.WriteLine($"Loading from {args[0]}");
-                    Console.WriteLine($"Input mtx size {mtx.Length}");
-                    PrintMatrix(mtx);
+            Console.WriteLine($"Time taken: {sw.ElapsedMilliseconds}ms");
+            Console.WriteLine();
 
-                    Console.WriteLine("============\nGaussian serial algorithm");
-                    sw.Restart();
-                    double[][] serialMtx = ExtensionMethods.CloneJaggedArray(mtx);
-                    GaussianSerial(serialMtx);
-                    sw.Stop();
-                    Console.WriteLine($"Time taken: {sw.ElapsedMilliseconds}ms");
+            PrintMatrix(mtx);
 
-
-                    Console.WriteLine("============\nGaussian parallel algorithm");
-
-                    Console.WriteLine("MPI world size: " + Communicator.world.Size);
-
-
-                    //sw.Restart();
-                    //GaussianParallelJob(mtx);
-                    //sw.Stop();
-
-                    int threadCount = int.Parse(args[1]);
-
-                    Thread[] threads = new Thread[threadCount];
-                    barrier = new Barrier(threadCount);
-
-                    sw.Restart();
-                    for(int i = 0; i < threadCount; i++)
-                    {
-                        int lol = i;
-                        threads[i] = new Thread(() => GaussianParallelJob2(mtx, threadCount, lol));
-                        threads[i].Start();
-                    }
-
-                    for (int i = 0; i < threadCount; i++)
-                    {
-                        threads[i].Join();
-                    }
-
-                    sw.Stop();
-
-                    Console.WriteLine($"Time taken: {sw.ElapsedMilliseconds}ms");
-                    Console.WriteLine();
-
-                    PrintMatrix(mtx);
-
-                    if (CompareMatrix(serialMtx, mtx))
-                    {
-                        Console.WriteLine("Result is correct");
-                    }
-                    else
-                    {
-                        Console.WriteLine("Result is not correct");
-                    }
-                }
-                else
-                {
-                    GaussianParallelJob(mtx);
-                }
+            if (CompareMatrix(serialMtx, mtx))
+            {
+                Console.WriteLine("Result is correct, {0:0.00}x speedup", speedSerial / sw.ElapsedMilliseconds);
+            }
+            else
+            {
+                Console.WriteLine("Result is not correct");
             }
         }
     }

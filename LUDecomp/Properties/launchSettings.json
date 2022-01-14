@@ -1,0 +1,8 @@
+{
+  "profiles": {
+    "LUDecomp": {
+      "commandName": "Project",
+      "commandLineArgs": "medium.txt 4"
+    }
+  }
+}

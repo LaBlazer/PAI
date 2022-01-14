@@ -8,10 +8,16 @@ Generate NxN matrix and save it to a file
 LUDecomp.exe -g <size> <output file>
 ```
 
-To run decomposition paralelly you need to have Microsoft MPI installed and then use the ```mpiexec``` tool
+To run decomposition parallelly you need to specify input matrix file and thread amount
 
 ```
-mpiexec -n <process amount> LUDecomp.exe <input file>
+LUDecomp.exe <input file> <thread amount>
+```
+
+To quickly test the program on matrix with size 2000x2000 run
+
+```
+LUDecomp.exe -g 2000 mtx.txt && LUDecomp.exe mtx.txt 4
 ```
 
 ## C++ Version usage
