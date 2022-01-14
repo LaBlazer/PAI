@@ -4,6 +4,7 @@ using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -12,15 +13,7 @@ namespace LUDecomp
     class Program
     {
 
-        static readonly object llll = new object();
-
         static readonly Random rnd = new Random();
-
-        static ConcurrentQueue<double[]>[] m_broadcastQueue;
-        static Thread[] m_threads;
-        static int m_threadDone;
-
-        Intracommunicator world = Communicator.world;
 
         static void DoolittleSerial(double[,] mtx)
         {
@@ -104,64 +97,29 @@ namespace LUDecomp
 
             PrintMatrix(mtx);
 
-            double[,] lower, upper;
-            SplitLU(mtx, out lower, out upper);
+            //double[,] lower, upper;
+            //SplitLU(mtx, out lower, out upper);
             //Console.WriteLine("============ Upper mtx ===========");
             //PrintMatrix(upper);
             //Console.WriteLine("============ Lower mtx ===========");
             //PrintMatrix(lower);
         }
 
-        static void Broadcast(ref double[] data, int source, int root)
+        static void GaussianParallelJob(double[,] mtx)
         {
-            if (source == root)
-            {
-                // broadcast
-                for (int i = 0; i < m_broadcastQueue.Length; i++)
-                {
-                    if (i != source)
-                        m_broadcastQueue[source].Enqueue(data);
-                }
-            } else
-            {
-                if (m_broadcastQueue[source].Count > 0)
-                {
-                    // else receive
-                    m_broadcastQueue[source].TryDequeue(out data);
-                }
-            }
-        }
+            // Source https://relate.cs.illinois.edu/course/cs554-f21/f/slides/slides_06.pdf
 
-        static IEnumerable<double[]> Receive(int myId)
-        {
-            double[] data;
-            while (m_broadcastQueue[myId].TryDequeue(out data))
-            {
-                yield return data;
-            }
-        }
+            Intracommunicator world = Communicator.world;
+            int threadCount = world.Size;
+            int threadId = world.Rank;
 
-        static bool AreThreadsRunning(int tid)
-        {
-            for (int i = 0; i < m_broadcastQueue.Length; i++)
-            {
-                if (i != tid && m_broadcastQueue[i].Count > 0)
-                    return true;
-            }
-
-            return false;
-        }
-
-        static void GaussianParallelJob(int threadId, int threadCount, double[,] mtx)
-        {
-            Console.WriteLine($"running job {threadId + 1}/{threadCount}");
+            //Console.WriteLine($"running job {threadId + 1}/{threadCount}");
 
             int n = mtx.GetLength(0);
 
-            int counter = 0;
             double[] buffer = new double[n];
 
-            // 1-d column agglomeration
+            // 1-d row agglomeration
             for (int k = 0; k < n - 1; k++)
             {             
                 for (int i = k + 1; i < n; i++)
@@ -169,8 +127,6 @@ namespace LUDecomp
                     if ((i % threadCount) == threadId)
                     {
                         // gaussian forward elimination
-                        counter++;
-
                         double lik = mtx[i, k] / mtx[k, k];
 
                         for (int j = k + 1; j < n; j++)
@@ -186,11 +142,7 @@ namespace LUDecomp
                     for (int j = k; j < n; j++)
                         buffer[j] = mtx[i, j];
 
-                    Console.WriteLine($"thread {threadId} before broadcast {string.Join(", ", buffer)}");
-
-                    Broadcast(ref buffer, threadId, i % threadCount);
-
-                    Console.WriteLine($"thread {threadId} after broadcast {string.Join(", ", buffer)}");
+                    world.Broadcast(ref buffer, i % threadCount);
 
                     // apply buffer
                     for (int j = k; j < n; j++)
@@ -198,59 +150,7 @@ namespace LUDecomp
                 }
             }
 
-            m_threadDone++;
-
-            while (m_threadDone < m_threads.Length) { }
-
-            Console.WriteLine($"thread {threadId} did {counter} ops");
-
-            //if(threadId == 0)
-            //{
-            Thread.Sleep(500 * threadId);
-            PrintMatrix(mtx);
-            Console.WriteLine();
-            //}
-
             return;
-        }
-
-        static void GaussianParallel(double[,] mtx, int threadCount)
-        {
-            // Source: https://relate.cs.illinois.edu/course/cs554-f21/f/slides/slides_06.pdf
-
-            if (mtx.GetLength(0) != mtx.GetLength(1))
-            {
-                Console.WriteLine("Not a block matrix!");
-                return;
-            }
-
-            int n = mtx.GetLength(0);
-            threadCount = Math.Min(threadCount, n);
-
-
-            m_broadcastQueue = new ConcurrentQueue<double[]>[threadCount];
-            m_threads = new Thread[threadCount];
-
-            for(int i = 0; i < threadCount; i++)
-            {
-                m_broadcastQueue[i] = new ConcurrentQueue<double[]>();
-
-                int idx = i;
-                m_threads[i] = new Thread((i) => GaussianParallelJob(idx, threadCount, (double[,])mtx.Clone()));
-                
-            }
-
-            for (int i = 0; i < threadCount; i++)
-            {
-                m_threads[i].Start();
-            }
-
-            for (int i = 0; i < threadCount; i++)
-            {
-                m_threads[i].Join();
-            }
-
-            //PrintMatrix(mtx);
         }
 
         static void SplitLU(double[,] mtx, out double[,] lower, out double[,] upper)
@@ -303,45 +203,142 @@ namespace LUDecomp
             return mtx;
         }
 
-        public static void Main(String[] arr)
+        static void SaveMatrix(double[,] mtx, string filename)
         {
-            Stopwatch sw = new Stopwatch();
+            int n = mtx.GetLength(0);
+            System.Text.StringBuilder sb = new System.Text.StringBuilder(n * n * 15);
 
-            double[,] mtx = { { 1, 2, 3 },
-                        { 4, 5, 3 },
-                        { 1, 2, 6 } };
+            for (int i = 0; i < n; i++)
+            {
+                int j;
+                for (j = 0; j < n - 1; j++)
+                {
+                    sb.Append(mtx[i, j]);
+                    sb.Append(' ');
+                }
 
-            double[,] mtx2 = GenerateRandomMatrix(5, -10, 10);
+                sb.Append(mtx[i, j]);
+                sb.Append('\n');
+            }
 
-            Console.WriteLine("Input mtx:");
-            //PrintMatrix(mtx2);
+            File.WriteAllText(filename, sb.ToString());
+        }
 
-            //Console.WriteLine("============\nDoolittle serial result: ");
-            //sw.Restart();
-            //DoolittleSerial(mtx2);
-            //sw.Stop();
-            //Console.WriteLine($"Time taken: {sw.ElapsedMilliseconds}ms");
+        static double[,] LoadMatrix(string filename)
+        {
+            string[] lines = File.ReadAllLines(filename);
+            int n = lines[0].Split(' ').Length;
+            double[,] mtx = new double[n, n];
 
-            Console.WriteLine("============\nGaussian serial result: ");
-            sw.Restart();
-            GaussianSerial((double[,])mtx2.Clone());
-            sw.Stop();
-            Console.WriteLine($"Time taken: {sw.ElapsedMilliseconds}ms");
+            for(int i = 0; i < lines.Length; i++)
+            {
+                string[] nums = lines[i].Split(' ');
+                for(int j = 0; j < nums.Length; j++)
+                {
+                    if(!double.TryParse(nums[j], out mtx[i, j]))
+                    {
+                        Console.WriteLine("Error while parsing!");
+                        return mtx;
+                    }
 
+                }
+            }
 
-            Console.WriteLine("============\nParallel algorithm result: ");
-            sw.Restart();
-            GaussianParallel((double[,])mtx2.Clone(), 4);
-            sw.Stop();
-            Console.WriteLine($"Time taken: {sw.ElapsedMilliseconds}ms");
+            return mtx;
+        }
 
-            //double[,] lower, upper;
-            //SplitLU(mtx, out lower, out upper);
-            //Console.WriteLine("============ Upper");
-            //PrintMatrix(upper);
-            //Console.WriteLine("============ Lower");
-            //PrintMatrix(lower);
+        static bool CompareMatrix(double[,] a, double[,] b)
+        {
+            if (a.GetLength(0) != b.GetLength(0) || a.GetLength(1) != b.GetLength(1))
+                return false;
+
+            int n = a.GetLength(0);
+
+            for (int i = 0; i < n; i++)
+            {
+                for (int j = 0; j < n; j++)
+                {
+                    if(a[i, j] != b[i, j])
+                    {
+                        return false;
+                    }
+                }
+            }
+
+            return true;
+        }
+
+        public static void Main(String[] args)
+        {
+            //Console.WriteLine(string.Join(" + ", args));
+
+            if(args.Length >= 3)
+            {
+                if(args[0] == "-g")
+                {
+                    Console.WriteLine($"Generating matrix of size {args[1]} to '{args[2]}'");
+                    
+                    double[,] mtx = GenerateRandomMatrix(int.Parse(args[1]), -50, 50);
+
+                    Console.WriteLine("Saving...");
+                    SaveMatrix(mtx, args[2]);
+
+                    return;
+                }
+            }
             
+            using (new MPI.Environment(ref args))
+            {
+                Stopwatch sw = new Stopwatch();
+
+                if(args.Length < 1)
+                {
+                    Console.WriteLine("Bad args! Usage: input.txt");
+                    return;
+                }
+
+                double[,] mtx = LoadMatrix(args[0]);
+
+                if (Intercommunicator.world.Rank == 0) // if we are root process
+                {
+                    Console.WriteLine($"Loading from {args[0]}");
+                    Console.WriteLine("Input mtx");
+                    PrintMatrix(mtx);
+
+                    Console.WriteLine("============\nGaussian serial algorithm");
+                    sw.Restart();
+                    double[,] serialMtx = (double[,])mtx.Clone();
+                    GaussianSerial(serialMtx);
+                    sw.Stop();
+                    Console.WriteLine($"Time taken: {sw.ElapsedMilliseconds}ms");
+
+
+                    Console.WriteLine("============\nGaussian parallel algorithm");
+
+                    Console.WriteLine("MPI world size: " + Communicator.world.Size);
+                    sw.Restart();
+                    GaussianParallelJob(mtx);
+                    sw.Stop();
+
+                    Console.WriteLine($"Time taken: {sw.ElapsedMilliseconds}ms");
+                    Console.WriteLine();
+
+                    PrintMatrix(mtx);
+
+                    if(CompareMatrix(serialMtx, mtx))
+                    {
+                        Console.WriteLine("Result is correct");
+                    }
+                    else
+                    {
+                        Console.WriteLine("Result is not");
+                    }
+                }
+                else
+                {
+                    GaussianParallelJob(mtx);
+                }
+            }
         }
     }
 }
