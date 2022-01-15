@@ -27,3 +27,11 @@ Basically the same as C# version
 ```
 LUDecompCpp.exe <input file> <thread amount>
 ```
+
+## Golang Version usage
+
+You need to have the Golang toolkit installed and then use command
+
+```
+go run decomp.go
+```
