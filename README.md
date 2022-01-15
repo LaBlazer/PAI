@@ -21,4 +21,9 @@ LUDecomp.exe -g 2000 mtx.txt && LUDecomp.exe mtx.txt 4
 ```
 
 ## C++ Version usage
-TBD
+
+Basically the same as C# version
+
+```
+LUDecompCpp.exe <input file> <thread amount>
+```

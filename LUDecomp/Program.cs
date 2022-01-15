@@ -56,55 +56,6 @@ namespace LUDecomp
 
         static Barrier barrier;
 
-        static void DoolittleSerial(double[,] mtx)
-        {
-            // Source: https://ieeexplore.ieee.org/document/7154772
-
-            if (mtx.GetLength(0) != mtx.GetLength(1))
-            {
-                Console.WriteLine("Not a block matrix!");
-                return;
-            }
-
-            int n = mtx.GetLength(0);
-            double sum = 0;
-            double[,] lower = new double[n, n];
-            double[,] upper = new double[n, n];
-
-            for (int i = 0; i < n; i++)
-            {
-                lower[i, i] = 1; // Diagonal 1
-
-                // Calculate upper
-                for (int k = i; k < n; k++)
-                {
-                    // Sum L(i, j) * U(j, k)
-                    sum = 0;
-                    for (int j = 0; j < i; j++)
-                        sum += (lower[i, j] * upper[j, k]);
-
-                    upper[i, k] = mtx[i, k] - sum;
-                }
-
-                // Calculate lower
-                for (int k = i; k < n; k++)
-                {
-                    // Sum L(k, j) * U(j, i)
-                    sum = 0;
-                    for (int j = 0; j < i; j++)
-                        sum += (lower[k, j] * upper[j, i]);
-
-                    lower[k, i] = (mtx[k, i] - sum) / upper[i, i];
-                }
-            }
-
-            Console.WriteLine("Upper mtx:");
-            PrintMatrix(upper);
-
-            Console.WriteLine("Lower mtx:");
-            PrintMatrix(lower);
-        }
-
         static void GaussianSerial(double[][] mtx)
         {
             if (mtx.Length != mtx[0].Length)
