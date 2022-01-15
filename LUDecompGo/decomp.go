@@ -10,7 +10,6 @@ import (
 	"sync"
 )
 
-var wgall sync.WaitGroup
 var wg sync.WaitGroup
 
 func loadMatrix(filename string) [][]float64 {
@@ -87,44 +86,30 @@ func gaussianSerial(mtx [][]float64) {
 	printMatrix(mtx)
 
 }
-
-func gaussianParallelJob(mtx [][]float64, threadId int, threadCount int) {
+func gaussianParallel(mtx [][]float64, threadCount int) {
 	n := len(mtx)
 
-	threadId++
-
 	for k := 0; k < n; k++ {
-		wg.Wait()
+		wg.Add(threadCount)
+		for t := 0; t < threadCount; t++ {
+			go func(threadId int) {
+				for i := k + int(threadId) + 1; i < n; i += threadCount {
+					lik := mtx[i][k] / mtx[k][k]
 
-		for i := k + int(threadId); i < n; i += threadCount {
-			lik := mtx[i][k] / mtx[k][k]
+					for j := k + 1; j < n; j++ {
+						mtx[i][j] -= lik * mtx[k][j]
+					}
 
-			for j := k + 1; j < n; j++ {
-				mtx[i][j] -= lik * mtx[k][j]
-			}
+					mtx[i][k] = lik
+				}
 
-			mtx[i][k] = lik
+				wg.Done()
+			}(t)
 		}
 
-		fmt.Println("iter ", k, " thread ", threadId)
-
-		wg.Done()
 		wg.Wait()
 	}
 
-	wgall.Done()
-}
-
-func gaussianParallel(mtx [][]float64, threadCount int) {
-	wgall.Add(threadCount)
-
-	//syncChannel = make(chan struct{}, threadCount)
-
-	for i := 0; i < threadCount; i++ {
-		go gaussianParallelJob(mtx, i, threadCount)
-	}
-
-	wgall.Wait()
 	printMatrix(mtx)
 }
 
@@ -141,7 +126,7 @@ func main() {
 
 	fmt.Println("Gaussian serial")
 
-	gaussianSerial(mtx)
+	//gaussianSerial(mtx)
 
 	fmt.Println("Gaussian parallel")
 
