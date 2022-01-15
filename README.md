@@ -42,5 +42,5 @@ Benchmarked with the same 2000x2000 matrix
 
 | Type | C# | C++ | Golang |
 | ---- | ---- | ---- | ---- |
-| Serial | 11.600s | 32.283 | 12.418s |
+| Serial | 11.600s | 32.283s | 12.418s |
 | Parallel | 4.648s | 9.758s | 4.605s |
