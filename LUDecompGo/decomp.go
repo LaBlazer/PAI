@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 )
 
 var wg sync.WaitGroup
@@ -86,6 +87,7 @@ func gaussianSerial(mtx [][]float64) {
 	printMatrix(mtx)
 
 }
+
 func gaussianParallel(mtx [][]float64, threadCount int) {
 	n := len(mtx)
 
@@ -114,7 +116,7 @@ func gaussianParallel(mtx [][]float64, threadCount int) {
 }
 
 func main() {
-	filename := "micro.txt"
+	filename := "big.txt"
 	threads := 4
 
 	fmt.Println("Loading from ", filename)
@@ -124,11 +126,23 @@ func main() {
 	fmt.Println("Input mtx size ", len(mtx))
 	printMatrix(mtx)
 
-	fmt.Println("Gaussian serial")
+	// copy mtx
+	serialMtx := make([][]float64, len(mtx))
+	for i := range mtx {
+		serialMtx[i] = make([]float64, len(mtx[i]))
+		copy(serialMtx[i], mtx[i])
+	}
 
-	//gaussianSerial(mtx)
+	fmt.Println("Gaussian serial")
+	start := time.Now()
+	gaussianSerial(serialMtx)
+	elapsed := time.Since(start)
+	fmt.Println("Time taken: ", elapsed)
 
 	fmt.Println("Gaussian parallel")
 
+	start = time.Now()
 	gaussianParallel(mtx, threads)
+	elapsed = time.Since(start)
+	fmt.Println("Time taken: ", elapsed)
 }
