@@ -38,9 +38,9 @@ go run decomp.go
 
 # Benchmarks
 
-Benchmarked with the same 2000x2000 matrix
+Benchmarked with the same 2000x2000 matrix, 4 threads and an Intel Core i5-7300HQ cpu
 
 | Type | C# | C++ | Golang |
 | ---- | ---- | ---- | ---- |
-| Serial | 11.600s | 32.283s | 12.418s |
-| Parallel | 4.648s | 9.758s | 4.605s |
+| Serial | 11.600s | 32.283s | 3.607s |
+| Parallel | 4.648s | 9.758s | 1.630s |
